@@ -12,7 +12,11 @@ export interface Wallet {
   net: Net
   fiat?: string
   language?: string
+  /** Staking owner (the basic account). */
   address: string
+  /** Every address Pay shared: basic account plus its remote HTLC account that holds the NIM. */
+  accounts: string[]
+  synced(): Promise<boolean>
   newStaker(delegation: string, luna: number): Promise<string>
   addStake(luna: number): Promise<string>
   setActive(luna: number): Promise<string>
@@ -46,20 +50,29 @@ const wrap = <A extends unknown[]>(fn: (...a: A) => Promise<string>) => async (.
   catch (e) { explain(e) }
 }
 
-export async function connectNimiqPay(): Promise<Wallet> {
+/** True when running inside Nimiq Pay (it injects its host context before page scripts run). */
+export const insideNimiqPay = () => typeof window !== 'undefined' && (!!window.nimiqPay || !!window.nimiq)
+
+export async function connectNimiqPay(onAccounts: (accounts: string[]) => void): Promise<Wallet> {
   let nimiq: NimiqProvider
-  try { nimiq = await init({ timeout: 4_000 }) }
-  catch { throw new WalletError('NOT_IN_NIMIQ_PAY') }
+  // Inside Pay the provider can take a while on a cold start; outside, fail fast.
+  try { nimiq = await init({ timeout: insideNimiqPay() ? 15_000 : 2_500 }) }
+  catch { throw new WalletError(insideNimiqPay() ? 'Nimiq Pay did not respond. Close Payday and open it again.' : 'NOT_IN_NIMIQ_PAY') }
   let accounts: string[]
   try { accounts = await nimiq.listAccounts() }
   catch (e) { explain(e) }
-  if (!accounts.length) throw new WalletError('No Nimiq account was shared.')
-  return {
+  if (!accounts?.length) throw new WalletError('No Nimiq account was shared. Open Payday again and allow access.')
+  // Pay rotates its remote (HTLC) account and announces the new list.
+  try { nimiq.on('accountsChanged', (a: string[]) => { if (a?.length) { wallet.address = a[0]; wallet.accounts = a; onAccounts(a) } }) }
+  catch { /* older host without the event */ }
+  const wallet: Wallet = {
     kind: 'nimiq-pay',
     net: getHostNetwork() ?? 'mainnet',
     fiat: getHostFiat()?.toLowerCase(),
     language: getHostLanguage(),
     address: accounts[0],
+    accounts,
+    synced: async () => { try { return await nimiq.isConsensusEstablished() } catch { return true } },
     newStaker: wrap((delegation: string, value: number) => nimiq.sendNewStakerTransaction({ delegation, value })),
     addStake: wrap((value: number) => nimiq.sendStakeTransaction({ value })),
     setActive: wrap((newActiveBalance: number) => nimiq.sendSetActiveStakeTransaction({ newActiveBalance })),
@@ -67,6 +80,7 @@ export async function connectNimiqPay(): Promise<Wallet> {
     remove: wrap((value: number) => nimiq.sendRemoveStakeTransaction({ value })),
     switchValidator: wrap((newDelegation: string) => nimiq.sendUpdateStakerTransaction({ newDelegation, reactivateAllStake: true })),
   }
+  return wallet
 }
 
 // ── Demo wallet ──────────────────────────────────────────────────────────────
@@ -78,7 +92,8 @@ export function demoWallet(head: number): Wallet {
   const ok = async () => { await new Promise(r => setTimeout(r, 700)); return 'demo-' + Math.random().toString(16).slice(2) }
   const staker = () => { if (!d.staker) throw new WalletError('No stake yet.'); return d.staker }
   return {
-    kind: 'demo', net: 'mainnet', address: DEMO_ADDRESS, demo: d,
+    kind: 'demo', net: 'mainnet', address: DEMO_ADDRESS, accounts: [DEMO_ADDRESS], demo: d,
+    synced: async () => true,
     async newStaker(delegation, luna) {
       if (luna > d.balance) throw new WalletError('Not enough NIM in this wallet.')
       d.balance -= luna; d.principal += luna; d.stakedSince = Date.now()
@@ -91,7 +106,10 @@ export function demoWallet(head: number): Wallet {
     },
     async setActive(luna) {
       const s = staker(); const total = s.balance + s.inactiveBalance
-      s.balance = luna; s.inactiveBalance = total - luna; s.inactiveFrom = d.head + 30; return ok()
+      if (luna > total) throw new WalletError('That is more than you have staked.')
+      s.balance = luna; s.inactiveBalance = total - luna
+      s.inactiveFrom = s.inactiveBalance ? d.head + 30 : null
+      return ok()
     },
     async retire(luna) { const s = staker(); s.inactiveBalance -= luna; s.retiredBalance += luna; if (!s.inactiveBalance) s.inactiveFrom = null; return ok() },
     async remove(luna) {

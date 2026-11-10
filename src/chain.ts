@@ -74,6 +74,20 @@ export async function getBalance(net: Net, address: string): Promise<number> {
   }
 }
 
+/**
+ * Nimiq Pay returns two addresses from listAccounts(): the basic account (the staking owner)
+ * and a "remote account", an HTLC contract that actually holds the spendable NIM. The basic
+ * address alone can read 0 while the wallet holds plenty, so spendable = the sum of both.
+ */
+export async function getSpendable(net: Net, addresses: string[]): Promise<number> {
+  const unique = [...new Map(addresses.map(a => [cleanAddress(a), a])).values()]
+  const balances = await Promise.all(unique.map(a => getBalance(net, a)))
+  return balances.reduce((s, b) => s + b, 0)
+}
+
+export const getTransactionByHash = (net: Net, hash: string) =>
+  rpc<Tx & { relatedAddresses?: string[] }>(net, 'getTransactionByHash', [hash])
+
 export const getHead = (net: Net) => rpc<number>(net, 'getBlockNumber')
 
 export interface Policy { blocksPerEpoch: number, minimumStake: number, blockSeparationTime: number, jailEpochs: number }
@@ -112,26 +126,32 @@ export const sameAddress = (a?: string | null, b?: string | null) => !!a && !!b 
 // ── Earnings: what the chain says you were actually paid ─────────────────────
 // Principal = NIM you moved into the staking contract minus what you took out.
 // Pools that "restake" add rewards straight to your stake, so stake − principal = rewards paid to you.
-export interface Earnings { principal: number, complete: boolean, stakedSince: number | null }
-export async function getEarnings(net: Net, address: string): Promise<Earnings> {
-  const txs = await getTransactions(net, address, 500)
-  const myHex = addressToHex(address)
+// The history is only trusted when it contains the staker's creation and is not truncated;
+// otherwise (e.g. NIM staked from a Nimiq Pay contract we can no longer see) we return null
+// and the app falls back to tracking from the first time it saw the stake.
+export interface Earnings { principal: number, stakedSince: number }
+export async function getEarnings(net: Net, owner: string, sources: string[]): Promise<Earnings | null> {
+  const myHex = addressToHex(owner)
+  const lists = await Promise.all([...new Set(sources.map(cleanAddress))].map(a => getTransactions(net, a, 500)))
+  if (lists.some(l => l.length >= 500)) return null
+  const seen = new Set<string>()
   let principal = 0
-  let stakedSince: number | null = null
-  for (const t of txs) {
-    if (!t.executionResult) continue
-    if (sameAddress(t.from, address) && sameAddress(t.to, STAKING_CONTRACT)) {
+  let created: number | null = null
+  for (const t of lists.flat()) {
+    if (!t.executionResult || seen.has(t.hash)) continue
+    seen.add(t.hash)
+    const mine = sources.some(s => sameAddress(t.from, s))
+    if (mine && sameAddress(t.to, STAKING_CONTRACT)) {
       const kind = t.recipientData.slice(0, 2)
-      // 06 = add stake to a staker given in the data; only count it if that staker is me
-      if (kind === '06' && !t.recipientData.slice(2).toLowerCase().startsWith(myHex)) continue
+      if (kind === '05') created = Math.min(created ?? Infinity, t.timestamp)
+      else if (kind === '06' && !t.recipientData.slice(2).toLowerCase().startsWith(myHex)) continue // stake for someone else
       principal += t.value
-      if (t.value > 0) stakedSince = Math.min(stakedSince ?? Infinity, t.timestamp)
     }
-    else if (sameAddress(t.from, STAKING_CONTRACT) && sameAddress(t.to, address)) {
+    else if (sameAddress(t.from, STAKING_CONTRACT) && sources.some(s => sameAddress(t.to, s))) {
       principal -= t.value
     }
   }
-  return { principal, complete: txs.length < 500, stakedSince }
+  return created === null ? null : { principal, stakedSince: created }
 }
 
 // ── Reward rate: today's real emission, not a marketing number ───────────────

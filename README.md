@@ -13,10 +13,17 @@ shows what it pays you **every week** in NIM and your own currency, and makes th
 - **Your weekly paycheck, live.** A big "this is what your NIM pays you each week" number, plus an
   "earned today" ticker that counts up second by second.
 - **What you were actually paid.** "Paid to you" is read from the chain: your current stake minus the NIM you
-  moved into staking (pools that restake add rewards straight to your stake).
+  moved into staking (pools that restake add rewards straight to your stake). When the history can't be trusted
+  (for example NIM staked from an older Nimiq Pay contract), Payday tracks from the day it first saw your stake
+  instead of guessing, so the number is never inflated.
 - **Paycheck goal.** Set "I want 100 NIM a week" and Payday tells you how much more to stake to get there.
 - **Withdrawals without confusion.** A step card shows the cooldown countdown (release block computed from
   `inactiveFrom`, epoch length and validator jail status), then one tap to unlock and one to move NIM home.
+- **Built for how Nimiq Pay holds money.** Nimiq Pay keeps spendable NIM in a remote HTLC account next to your basic
+  address; Payday reads both (and follows `accountsChanged` when Pay rotates it), so it never wrongly shows an empty wallet.
+- **Changed your mind?** "Keep earning instead" cancels a withdrawal while it cools down.
+- **No double sends.** After you approve in Nimiq Pay, the screen stays in a confirming state and polls the chain
+  until the change appears.
 - **Switch validator** without unstaking (`sendUpdateStakerTransaction`, stake reactivates automatically).
 - **Share my payday.** A share card ("My NIM pays me 20 NIM every week, while I do nothing") with a deeplink
   that opens Payday inside Nimiq Pay.
