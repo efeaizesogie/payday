@@ -3,28 +3,30 @@
 **Name:** Payday
 **Tagline:** Turn your NIM into a paycheck.
 
-## Description (under 250 words)
+## Short description (form field, max 280 characters)
 
-Payday turns NIM staking into something everyone already understands: a paycheck.
+Payday shows the NIM you've lost by not staking, then turns staking into a weekly paycheck: a signed payslip anyone can verify, spending your interest (never savings) via Lightning, and Circles: ajo where nobody holds the money.
 
-Most NIM holders never stake because "APY", "delegation" and "retire stake" sound like homework. Payday asks one
-question: how much NIM should work for you? You see your weekly, monthly and yearly pay in NIM and your currency,
-then stake in one tap with a validator picked for uptime, fee and compounding.
+## Builder story / long description
 
-Paycheck tab: your weekly pay, a live "earned today" ticker, what the chain says you've been paid, a paycheck goal,
-and a Stake checkup that flags problems (validator not paying, jailed, expensive, a better option, idle NIM) with
-one-tap fixes. Withdrawals are a clear three-step card with a real countdown, and you can cancel to keep earning.
+Most NIM holders never stake, and every staking app looks the same: a balance and an APY. Payday starts somewhere
+else: with what you've already lost. It rebuilds your idle balance from your own transactions and shows, in NIM and
+your currency, what it could have earned since proof-of-stake launched.
 
-Plan tab: a 1 to 5-year projection on Nimiq's real reward curve, and what not staking costs you as supply grows.
+Then it makes staking feel like a job that pays: one-tap staking with a validator picked for uptime, fee and
+compounding; a weekly Payday reveal with your streak; a Stake checkup that flags a bad validator with one-tap fixes;
+and a payslip your wallet signs, which anyone can check against the live blockchain (tampering is detected).
 
-Learn tab: six two-minute lessons with live network numbers and a quick check each, so new users understand staking
-before they risk anything.
+Your pay is meant to be spent: cash out exactly what you've earned while savings stay staked, pay any Lightning
+invoice with NIM through Nimiq Pay's built-in swaps, or spend in AbaPay and NimShop.
 
-Who it's for: every Nimiq Pay user holding NIM, especially people new to staking.
+Payday Circles bring the ajo/esusu tradition on-chain with no custody: everyone stakes their own NIM and the group
+watches one shared paycheck. There's no server; a circle lives in its link.
 
-Nimiq integration: all six staking actions through the Mini App SDK, with full error handling. It reads Nimiq Pay's
-remote HTLC account so balances are correct, follows the network and currency Nimiq Pay is set to, and has no
-backend or custody. Light, dark and system themes.
+Plus a growth planner on Nimiq's real reward curve, six two-minute lessons, and light and dark themes.
+
+Nimiq integration: all six staking actions, message signing and Lightning payments through the Mini App SDK, Nimiq
+Pay's remote HTLC balance, host network and currency, full error handling, and no backend.
 
 ## Links to fill in
 - Live app: https://efeaizesogie.github.io/payday/

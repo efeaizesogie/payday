@@ -2,21 +2,26 @@ import './style.css'
 import {
   type Net, type Staker, type Validator, type Policy, type Currency, CURRENCIES, LUNA,
   getStaker, getSpendable, getHead, getPolicy, getEarnings, networkStats, getValidators, getPrices, project, type NetStats,
-  bestValidator, validatorScore, paysStakers, payoutLabel, sameAddress, shortAddress,
+  bestValidator, validatorScore, paysStakers, payoutLabel, sameAddress, shortAddress, cleanAddress, formatAddress,
 } from './chain'
 import { type Wallet, WalletError, connectNimiqPay, demoWallet } from './wallet'
 import { nim, fiat, pct, duration, esc, parseNim } from './format'
 import { checkup } from './health'
 import { LESSONS } from './learn'
+import {
+  type Missed, type Payslip, type Circle, missedEarnings, demoMissed, weekKey, streak, payslipMessage, encodePayslip,
+  decodePayslip, bolt11Sats, isLightningInvoice, PARTNERS, openInPay, encodeCircle, decodeCircle,
+} from './features'
+import { addressFromPublicKey, verifyNimiqMessage } from './crypto'
 
 // ── State ────────────────────────────────────────────────────────────────────
-type Sheet = null | 'add' | 'validators' | 'withdraw' | 'goal' | 'card' | 'currency' | 'how' | 'settings' | 'lesson'
-type Tab = 'pay' | 'plan' | 'learn'
+type Sheet = null | 'add' | 'validators' | 'withdraw' | 'goal' | 'card' | 'currency' | 'how' | 'settings' | 'lesson' | 'spend' | 'payslip' | 'newcircle'
+type Tab = 'pay' | 'plan' | 'circles' | 'learn'
 type Theme = 'system' | 'light' | 'dark'
 interface Activity { t: number, text: string }
 interface Paid { amount: number, since: number, tracked: boolean }
 const S = {
-  phase: 'loading' as 'loading' | 'outside' | 'connect' | 'error' | 'ready',
+  phase: 'loading' as 'loading' | 'outside' | 'connect' | 'error' | 'ready' | 'verify',
   demoConnect: false, // the connect screen is the demo's walkthrough, not a real decline
   approval: null as null | { title: string, rows: [string, string][], note: string, ok: string, resolve: (ok: boolean) => void },
   fatal: '',
@@ -50,6 +55,17 @@ const S = {
   planYears: 3,
   planRestake: true,
   activity: [] as Activity[],
+  missed: null as Missed | null,
+  weeks: [] as string[],
+  reveal: false,
+  payslipLink: '',
+  verify: null as null | { p: Payslip, sigOk: boolean, addrOk: boolean, live: Staker | null | 'demo' | 'error', liveName: string },
+  verifyErr: '',
+  circles: [] as Circle[],
+  circle: '',
+  circleData: {} as Record<string, { staked: number, weekly: number } | null | 'loading'>,
+  joinCircle: null as Circle | null,
+  invoice: '',
 }
 
 const store = {
@@ -135,6 +151,15 @@ async function refresh(full = false) {
       S.validators = vals; S.stats = stats; S.apr = stats.apr; S.policy = policy
       S.pick = S.pick ?? bestValidator(vals) ?? null
     }
+    if (S.staker?.balance) {
+      const k = weekKey()
+      if (!S.weeks.includes(k)) { S.weeks = [...S.weeks, k].slice(-104); store.set(weeksKey(), S.weeks) }
+    }
+    if (full && S.stats) {
+      const fee = (myValidator() ?? S.pick)?.fee ?? 0
+      if (w.kind === 'demo') S.missed = demoMissed(S.net, S.stats, fee)
+      else missedEarnings(S.net, w.accounts, S.stats, fee).then(m => { S.missed = m; render() }).catch(() => {})
+    }
     getPrices().then(p => { S.prices = p; render() }).catch(() => {})
     S.dataError = ''
   }
@@ -155,7 +180,9 @@ async function start() {
   S.goalWeekly = store.get('goal', 0)
   S.theme = store.get<Theme>('theme', 'system'); applyTheme()
   S.learned = store.get('learned', {})
+  S.circles = store.get('circles', [])
   render()
+  if (location.hash.startsWith('#verify=')) return showVerify(location.hash.slice(8))
   try {
     S.wallet = await connectNimiqPay(() => refresh())
   }
@@ -182,7 +209,7 @@ function askApproval(title: string, rows: [string, string][], note: string, ok =
 }
 const vName = (addr: string) => S.validators.find(v => sameAddress(v.address, addr))?.name ?? shortAddress(addr)
 function withDemoApprovals(w: Wallet): Wallet {
-  const gate = async (title: string, rows: [string, string][], run: () => Promise<string>) => {
+  const gate = async <T>(title: string, rows: [string, string][], run: () => Promise<T>): Promise<T> => {
     if (!(await askApproval(title, rows, 'Nimiq Pay shows this before anything is sent. Nothing moves until you approve it there.'))) throw new WalletError('You cancelled. Nothing was sent.', true)
     return run()
   }
@@ -195,6 +222,8 @@ function withDemoApprovals(w: Wallet): Wallet {
     retire: l => gate('Unlock stake', [['Amount', `${nim(l)} NIM`], fee], () => w.retire(l)),
     remove: l => gate('Withdraw to wallet', [['Amount', `${nim(l)} NIM`], fee], () => w.remove(l)),
     switchValidator: d => gate('Switch validator', [['New validator', vName(d)], fee], () => w.switchValidator(d)),
+    sign: m => gate('Sign a message', [['App', 'Payday'], ['Message', 'Your payslip'], ['Moves NIM', 'No']], () => w.sign(m)),
+    payLightning: inv => gate('Pay Lightning invoice', [['Amount', `${(bolt11Sats(inv) ?? 0).toLocaleString('en-US')} sats`], ['Paid with', 'NIM, swapped to BTC'], ['Swap fee', 'shown by Nimiq Pay']], () => w.payLightning(inv)),
   }
 }
 
@@ -221,9 +250,15 @@ async function enter() {
   S.net = S.wallet!.net
   S.currency = guessCurrency()
   S.activity = store.get(activityKey(), [])
+  S.weeks = store.get(weeksKey(), [])
+  if (isDemo() && !S.circles.some(x => x.id === 'demo')) seedDemoCircle()
   S.phase = 'loading'; render()
   await refresh(true)
-  S.phase = 'ready'; render()
+  S.phase = 'ready'
+  const inv = location.hash.match(/circle=([^&]+)/)
+  if (inv) { const cc = decodeCircle(inv[1]); if (cc) { S.joinCircle = cc; S.tab = 'circles' } }
+  else if (S.staker?.balance && store.get(revealKey(), '') !== weekKey() && !/demo-staked/.test(location.hash)) S.reveal = true
+  render()
   setInterval(() => { if (!document.hidden && !S.busy && !S.pending) refresh() }, 30_000)
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.phase === 'ready') refresh() })
 }
@@ -302,6 +337,74 @@ const actions: Record<string, (el: HTMLElement) => void> = {
     S.phase = 'loading'; render()
     start()
   },
+  revealOpen: () => { S.reveal = true; revealCounted = false; render() },
+  revealClose: () => { S.reveal = false; store.set(revealKey(), weekKey()); render() },
+  revealPayslip: () => { S.reveal = false; store.set(revealKey(), weekKey()); S.payslipLink = ''; S.sheet = 'payslip'; render() },
+  makePayslip: async () => {
+    if (S.busy) return
+    S.busy = 'Waiting for your signature'; render()
+    try {
+      const s = S.staker!, v = myValidator()
+      const p: Payslip = {
+        v: 1, app: 'Payday', net: S.net, address: isDemo() ? 'Demo account' : formatAddress(S.wallet!.address),
+        staked: s.balance / LUNA, weekly: weeklyPay(s.balance, v) / LUNA, paid: S.paid ? S.paid.amount / LUNA : null,
+        rate: rateFor(v), validator: v?.name ?? 'unknown', at: Date.now(), ...(isDemo() ? { demo: true } : {}),
+      }
+      const { publicKey, signature } = await S.wallet!.sign(payslipMessage(p))
+      S.payslipLink = location.origin + location.pathname + '#verify=' + encodePayslip(p, signature, publicKey)
+      logActivity('Signed a payslip.')
+    }
+    catch (e) { toast(e instanceof Error ? e.message : String(e), (e as WalletError).cancelled ? 'ok' : 'err') }
+    finally { S.busy = ''; render() }
+  },
+  sharePayslip: async () => {
+    const url = S.payslipLink
+    try { if (navigator.share) { await navigator.share({ title: 'My Payday payslip', text: 'My NIM staking income, signed by my wallet. Check it against the live blockchain:', url }); return } }
+    catch (e) { if ((e as Error).name === 'AbortError') return }
+    try { await navigator.clipboard.writeText(url); toast('Payslip link copied.') }
+    catch { toast('Copy the link from the box instead.', 'err') }
+  },
+  cashOut: () => {
+    const s = S.staker!, amt = cashOutAmount()
+    if (amt <= 0) return toast('Nothing earned to cash out yet.', 'err')
+    act('Waiting for approval', () => S.wallet!.setActive(s.balance - amt), `${nim(amt)} NIM of earnings is cooling down. Your savings stay staked.`)
+  },
+  payInvoice: () => {
+    const inv = (document.getElementById('ln-in') as HTMLTextAreaElement | null)?.value.trim().replace(/^lightning:/i, '') ?? ''
+    if (!isLightningInvoice(inv)) return toast('Paste a Lightning invoice that starts with lnbc.', 'err')
+    if (bolt11Sats(inv) === null) return toast('This invoice has no amount. Ask the merchant for one with a fixed amount.', 'err')
+    act('Waiting for approval', () => S.wallet!.payLightning(inv), 'Payment sent. The merchant receives bitcoin once the swap completes.', () => { S.invoice = '' })
+  },
+  newCircle: () => {
+    const name = (document.getElementById('c-name') as HTMLInputElement).value.trim()
+    const nick = (document.getElementById('c-nick') as HTMLInputElement).value.trim() || 'Me'
+    const goal = parseNim((document.getElementById('c-goal') as HTMLInputElement).value)
+    if (!name) return toast('Give your circle a name.', 'err')
+    const cc: Circle = { id: Math.random().toString(36).slice(2, 10), name, goal: Number.isFinite(goal) ? goal / LUNA : 0, members: [{ a: S.wallet!.address, n: nick }] }
+    S.circles = [...S.circles, cc]; store.set('circles', S.circles); S.circle = cc.id; S.sheet = null
+    logActivity(`Started the circle ${name}.`); render(); loadCircle(cc)
+  },
+  joinCircle: () => {
+    const cc = S.joinCircle!
+    const nick = (document.getElementById('j-nick') as HTMLInputElement).value.trim() || 'Me'
+    const me = S.wallet!.address
+    const merged: Circle = { ...cc, members: cc.members.some(m => sameAddress(m.a, me)) ? cc.members : [...cc.members, { a: me, n: nick }] }
+    S.circles = [...S.circles.filter(x => x.id !== cc.id), merged]; store.set('circles', S.circles)
+    S.joinCircle = null; S.circle = merged.id; history.replaceState(null, '', location.pathname)
+    logActivity(`Joined the circle ${merged.name}.`); toast('You joined. Share the circle link so everyone sees you.'); render(); loadCircle(merged)
+  },
+  skipJoin: () => { S.joinCircle = null; history.replaceState(null, '', location.pathname); render() },
+  openCircle: el => { const cc = S.circles.find(x => x.id === el.dataset.id); if (cc) { S.circle = cc.id; render(); loadCircle(cc) } },
+  closeCircle: () => { S.circle = ''; render() },
+  inviteCircle: async () => {
+    const cc = S.circles.find(x => x.id === S.circle); if (!cc) return
+    const url = `${appLink()}#circle=${encodeCircle(cc)}`
+    try { if (navigator.share) { await navigator.share({ title: `Join ${cc.name} on Payday`, text: 'We each stake our own NIM and watch our group paycheck grow. Nobody holds anyone\'s money.', url }); return } }
+    catch (e) { if ((e as Error).name === 'AbortError') return }
+    try { await navigator.clipboard.writeText(url); toast('Circle link copied. Send it to your group.') }
+    catch { toast('Sharing is not available here.', 'err') }
+  },
+  leaveCircle: () => { S.circles = S.circles.filter(x => x.id !== S.circle); store.set('circles', S.circles); S.circle = ''; render() },
   approve: () => { const a = S.approval; S.approval = null; a?.resolve(true) },
   deny: () => { const a = S.approval; S.approval = null; a?.resolve(false) },
   retry: () => location.reload(),
@@ -431,6 +534,7 @@ app.addEventListener('input', e => {
   if (el.id === 'amt-new' || el.id === 'amt-add') updateCalc(el)
   if (el.id === 'amt-out') updateWithdrawCalc()
   if (el.id === 'goal-in') updateGoalCalc()
+  if (el.id === 'ln-in') { S.invoice = el.value; updateInvoice() }
   if (el.id === 'plan-in') { const v = parseNim(el.value); S.planAmount = Number.isFinite(v) ? v / LUNA : 0; updatePlan() }
 })
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.sheet) { S.sheet = null; render() } })
@@ -520,6 +624,7 @@ function tabBar() {
   const tabs: [Tab, string, string][] = [
     ['pay', 'Paycheck', '<path d="M3 7h18v12H3zM3 11h18M7 15h4"/>'],
     ['plan', 'Plan', '<path d="M4 19V5M4 19h16M8 15l4-4 3 3 5-6"/>'],
+    ['circles', 'Circles', '<circle cx="9" cy="9" r="3.2"/><circle cx="16.5" cy="10.5" r="2.6"/><path d="M3.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5M14.5 15.2c2.3-.5 4.6.6 5.5 3.3"/>'],
     ['learn', 'Learn', '<path d="M3 6l9-3 9 3-9 3zM7 8v5c0 1.7 2.2 3 5 3s5-1.3 5-3V8"/>'],
   ]
   const left = LESSONS.filter(l => !S.learned[l.id]).length
@@ -687,6 +792,7 @@ function homeNotStaking() {
   const v = S.pick
   const low = !isDemo() && S.spendable < minStake()
   return `
+  ${timeMachine()}
   <section class="intro">
     <h1>Turn your NIM into a weekly paycheck</h1>
     <p class="lede">Stake once, get paid ${v && paysStakers(v) ? esc(payoutLabel(v)) : 'every few hours'}, and withdraw whenever you like.</p>
@@ -790,8 +896,11 @@ function homeStaking() {
 
   <div class="actions">
     <button class="btn btn-primary" data-a="sheet" data-sheet="add" ${locked ? 'disabled' : ''}>Stake more</button>
-    <button class="btn" data-a="sheet" data-sheet="card" ${s.balance ? '' : 'disabled'}>Share</button>
+    <button class="btn" data-a="sheet" data-sheet="spend" ${s.balance ? '' : 'disabled'}>Spend my pay</button>
+    <button class="btn" data-a="revealOpen" ${s.balance ? '' : 'disabled'}>This week's payday</button>
+    <button class="btn" data-a="sheet" data-sheet="payslip" ${s.balance ? '' : 'disabled'}>Payslip</button>
   </div>
+  ${S.spendable >= minStake() ? idleNudge() : ''}
   <div class="actions-quiet">
     <button class="link" data-a="sheet" data-sheet="withdraw" ${locked || !s.balance ? 'disabled' : ''}>Withdraw</button>
     <button class="link" data-a="sheet" data-sheet="how">How it works</button>
@@ -883,6 +992,17 @@ function sheet(): string {
       <button class="btn btn-primary btn-block" data-a="share">Share</button>`
       break
     }
+    case 'spend': spendSheet(o => { title = o.title; body = o.body }); break
+    case 'payslip': payslipSheet(o => { title = o.title; body = o.body }); break
+    case 'newcircle':
+      title = 'Start a circle'
+      body = `<p class="lede">Ajo, but nobody holds the money. Everyone stakes their own NIM, and the circle shows your group paycheck so you keep each other going.</p>
+      <label class="label" for="c-name">Circle name</label><input class="field" id="c-name" maxlength="40" placeholder="Family savers" autocomplete="off">
+      <label class="label" for="c-nick">Your name in the circle</label><input class="field" id="c-nick" maxlength="24" placeholder="Efe" autocomplete="off">
+      <label class="label" for="c-goal">Group goal, NIM a week (optional)</label><input class="field" id="c-goal" inputmode="decimal" placeholder="200" autocomplete="off">
+      <p class="hint">There's no server. The circle lives in its link, so anyone with the link can see members' staking, which is public on the blockchain anyway.</p>
+      <button class="btn btn-primary btn-block" data-a="newCircle">Create circle</button>`
+      break
     case 'how':
       title = 'How Payday works'
       body = `<ol class="how">
@@ -906,6 +1026,297 @@ function skeleton() {
     <div class="skel-block"></div>
     <div class="skel-block skel-short"></div>
   </div>`
+}
+
+// ══ Standout features ═══════════════════════════════════════════════════════
+const weeksKey = () => `weeks:${S.net}:${S.wallet?.address}`
+const revealKey = () => `revealed:${S.net}:${S.wallet?.address}`
+const fmtShort = (t: number) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+
+// 1. Time machine ─────────────────────────────────────────────────────────────
+function timeMachine(): string {
+  const m = S.missed
+  if (!m || m.missedNim < 1) return ''
+  return `<section class="tm" aria-label="Money left on the table">
+    <p class="tm-label">Money left on the table</p>
+    <p class="tm-amount"><span class="num">${nim(m.missedNim * LUNA)}</span> NIM</p>
+    <p class="tm-fiat">${price() !== undefined ? `${fiat(m.missedNim * LUNA, price(), S.currency)} at today's price` : '&nbsp;'}</p>
+    <p class="tm-note">${isDemo() ? 'Demo: 25,000 idle NIM since' : 'What your idle NIM could have earned since'} ${fmtShort(m.since)}, at the network's real rate. ${isDemo() ? '' : 'Rebuilt from your own transactions, and rounded down.'}</p>
+  </section>`
+}
+function idleNudge(): string {
+  const r = rateFor(myValidator())
+  const w = S.spendable * r * 7 / 365
+  return `<section class="panel panel-quiet" aria-label="Idle NIM">
+    <span class="label">${nim(S.spendable)} NIM is sitting idle</span>
+    <span class="hint">It could be paying you about ${nim(w)} NIM a week.</span>
+    <button class="link" data-a="sheet" data-sheet="add">Put it to work</button>
+  </section>`
+}
+
+// 2. Weekly Payday reveal ─────────────────────────────────────────────────────
+function revealModal(): string {
+  if (!S.reveal || !S.staker) return ''
+  const v = myValidator()
+  const weekly = weeklyPay(S.staker.balance, v)
+  const st = Math.max(1, streak(S.weeks))
+  const paid = S.paid?.amount ?? 0
+  let mile = st === 1 ? 'Your first payday with Payday. From now on, your NIM works every week.' : `${st} paydays in a row. Your NIM hasn't missed a week.`
+  if (st >= 4) mile = `${st} weeks straight. That's a month of your NIM paying you.`
+  if (paid > 0 && S.staker.balance > 0 && paid / S.staker.balance >= 0.01) mile += ` Staking has added ${pct(paid / (S.staker.balance - paid))} to what you put in.`
+  const target = weekly / LUNA
+  if (!revealCounted) { revealCounted = true; setTimeout(() => countUp('rv-num', target), 60) }
+  else setTimeout(() => { const n = document.getElementById('rv-num'); if (n && !counting) n.textContent = target.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }, 0)
+  return `<div class="approval-wrap reveal-wrap"><div class="approval reveal" role="dialog" aria-modal="true" aria-labelledby="rv-title">
+    <p class="hint">Week of ${new Date(Date.now() - ((new Date().getDay() + 6) % 7) * 86_400_000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+    <h2 id="rv-title" class="reveal-title">It's payday</h2>
+    <p class="reveal-amount"><span class="num" id="rv-num">0.00</span> NIM</p>
+    <p class="hint">is what your stake pays you this week${price() !== undefined ? `, about ${fiat(weekly, price(), S.currency)}` : ''}.</p>
+    <dl class="reveal-stats">
+      <div><dt>Streak</dt><dd class="num">${st} wk</dd></div>
+      <div><dt>Paid so far</dt><dd class="num">${S.paid ? nim(S.paid.amount) : '–'}</dd></div>
+      <div><dt>Yearly rate</dt><dd class="num">${pct(rateFor(v))}</dd></div>
+    </dl>
+    <p class="reveal-mile">${esc(mile)}</p>
+    <div class="actions"><button class="btn" data-a="revealClose">Done</button><button class="btn btn-primary" data-a="revealPayslip">Get my payslip</button></div>
+  </div></div>`
+}
+let revealCounted = false
+let counting = false
+function countUp(id: string, to: number) {
+  const el = document.getElementById(id)
+  if (!el) return
+  const fmt = (x: number) => x.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = fmt(to); return }
+  const t0 = performance.now(), dur = 1400
+  counting = true
+  const step = (t: number) => {
+    const k = Math.min(1, (t - t0) / dur), e = 1 - (1 - k) ** 3
+    const n = document.getElementById(id); if (!n) { counting = false; return }
+    n.textContent = fmt(to * e)
+    if (k < 1) requestAnimationFrame(step)
+    else counting = false
+  }
+  requestAnimationFrame(step)
+}
+
+// 3. Verifiable payslip ───────────────────────────────────────────────────────
+function payslipSheet(set: (o: { title: string, body: string }) => void) {
+  const s = S.staker, v = myValidator()
+  if (!s) return set({ title: 'Payslip', body: '<p class="lede">Start staking to get a payslip.</p>' })
+  const rows: [string, string][] = [
+    ['Account', isDemo() ? 'Demo account' : shortAddress(S.wallet!.address)],
+    ['Staked', `${nim(s.balance)} NIM`],
+    ['Weekly pay', `${nim(weeklyPay(s.balance, v))} NIM`],
+    ['Paid so far', S.paid ? `${nim(S.paid.amount)} NIM` : 'not available'],
+    ['Yearly rate', pct(rateFor(v))],
+    ['Validator', v?.name ?? 'unknown'],
+  ]
+  set({
+    title: 'Your payslip',
+    body: `<p class="lede">Proof of what your NIM earns, signed by your wallet. Anyone with the link can check it against the live blockchain.</p>
+    <dl class="approval-rows">${rows.map(([k, val]) => `<div><dt>${k}</dt><dd>${esc(val)}</dd></div>`).join('')}</dl>
+    ${S.payslipLink
+      ? `<label class="label" for="ps-link">Your payslip link</label><input class="field" id="ps-link" readonly value="${esc(S.payslipLink)}">
+         <button class="btn btn-primary btn-block" data-a="sharePayslip">Share payslip</button>
+         <a class="link link-center" href="${esc(S.payslipLink)}" target="_blank" rel="noopener">Open the check page</a>`
+      : `<p class="hint">Signing doesn't move any NIM. Nimiq Pay asks you to approve the message first.</p>
+         <button class="btn btn-primary btn-block" data-a="makePayslip" ${S.busy ? 'disabled' : ''}>${S.busy ? esc(S.busy) + '…' : 'Sign and create link'}</button>`}`,
+  })
+}
+
+async function showVerify(raw: string) {
+  S.phase = 'verify'; render()
+  const d = decodePayslip(raw)
+  if (!d) { S.verifyErr = 'This payslip link is broken or incomplete. Ask for a fresh one.'; render(); return }
+  const sigOk = await verifyNimiqMessage(payslipMessage(d.p), d.sig, d.pub)
+  const addrOk = d.p.demo ? true : sameAddress(addressFromPublicKey(d.pub), d.p.address)
+  let live: Staker | null | 'demo' | 'error' = 'demo'
+  let liveName = ''
+  if (!d.p.demo) {
+    try {
+      const [st, vals] = await Promise.all([getStaker(d.p.net, d.p.address), getValidators(d.p.net).catch(() => [] as Validator[])])
+      live = st
+      liveName = st?.delegation ? vals.find(v => sameAddress(v.address, st.delegation))?.name ?? shortAddress(st.delegation) : ''
+    }
+    catch { live = 'error' }
+  }
+  S.verify = { p: d.p, sigOk, addrOk, live, liveName }
+  render()
+}
+
+function verifyView(): string {
+  if (S.verifyErr) return `<section class="intro"><h1>Payslip check</h1><p class="lede">${esc(S.verifyErr)}</p></section>`
+  const r = S.verify
+  if (!r) return skeleton()
+  const ok = r.sigOk && r.addrOk
+  const p = r.p
+  const liveRow = r.live === 'demo' ? 'Demo payslip, no real account to check'
+    : r.live === 'error' ? 'Could not reach the network. Try again shortly.'
+      : r.live === null ? 'No stake found for this account right now'
+        : `${nim(r.live.balance)} NIM staked${r.liveName ? ` with ${r.liveName}` : ''}`
+  return `<section class="intro"><h1>Payslip check</h1><p class="lede">A Payday payslip, signed by the account's own wallet.</p></section>
+  <div class="verdict ${ok ? 'verdict-ok' : 'verdict-bad'}" role="status">
+    <span class="check-icon" aria-hidden="true">${ok ? '✓' : '!'}</span>
+    <div><b>${ok ? (p.demo ? 'Genuine signature (demo payslip)' : 'Signed by this account') : 'Not verified'}</b>
+    <span class="hint">${ok ? 'The signature matches. This payslip has not been changed since it was signed.' : r.sigOk ? 'The signature is real but belongs to a different account.' : 'The signature does not match. Do not trust this payslip.'}</span></div>
+  </div>
+  <section class="panel">
+    <h2 class="label">${ok ? `What was signed on ${fmtShort(p.at)}` : 'What this link claims'}</h2>
+    <dl class="approval-rows">
+      <div><dt>Account</dt><dd>${esc(p.demo ? 'Demo account' : shortAddress(p.address))}</dd></div>
+      <div><dt>Staked</dt><dd>${nim(p.staked * LUNA)} NIM</dd></div>
+      <div><dt>Weekly pay</dt><dd>${nim(p.weekly * LUNA)} NIM</dd></div>
+      <div><dt>Yearly rate</dt><dd>${pct(p.rate)}</dd></div>
+      <div><dt>Validator</dt><dd>${esc(p.validator)}</dd></div>
+      <div><dt>Network</dt><dd>${p.net === 'testnet' ? 'Testnet' : 'Mainnet'}</dd></div>
+    </dl>
+  </section>
+  <section class="panel">
+    <h2 class="label">Live on the blockchain now</h2>
+    <p>${esc(liveRow)}</p>
+    <p class="hint">Payday reads this straight from the Nimiq network, so it can't be faked by whoever sent the link.</p>
+  </section>
+  <a class="btn btn-primary btn-block" href="${appLink()}">Get your own Payday</a>`
+}
+
+// 4. Spend your pay ───────────────────────────────────────────────────────────
+function cashOutAmount(): number {
+  const s = S.staker
+  if (!s || !S.paid || S.paid.amount <= 0) return 0
+  let amt = Math.min(S.paid.amount, s.balance)
+  if (s.balance - amt > 0 && s.balance - amt < minStake()) amt = 0
+  return Math.floor(amt)
+}
+function nimForSats(sats: number): number | null {
+  const btc = S.prices.btcUsd, nimUsd = S.prices.usd
+  if (!btc || !nimUsd) return null
+  return (sats / 1e8) * btc / nimUsd
+}
+function updateInvoice() {
+  const out = document.getElementById('ln-out')
+  if (!out) return
+  const inv = S.invoice.trim()
+  if (!inv) { out.textContent = ''; return }
+  if (!isLightningInvoice(inv)) { out.textContent = 'That doesn\'t look like a Lightning invoice. It should start with lnbc.'; return }
+  const sats = bolt11Sats(inv)
+  if (sats === null) { out.textContent = 'This invoice has no amount. Payday can only pay invoices with a fixed amount.'; return }
+  const n = nimForSats(sats)
+  const earned = (S.paid?.amount ?? 0) / LUNA
+  out.textContent = `${sats.toLocaleString('en-US')} sats${n !== null ? `, about ${Math.ceil(n).toLocaleString('en-US')} NIM plus the swap fee` : ''}. ${n !== null && earned > 0 ? (n <= earned ? 'Covered by what you\'ve earned.' : 'That\'s more than you\'ve earned, so part comes from savings.') : ''}`
+}
+function spendSheet(set: (o: { title: string, body: string }) => void) {
+  const amt = cashOutAmount()
+  const lnOk = S.net === 'mainnet'
+  set({
+    title: 'Spend your pay',
+    body: `<p class="lede">Spend what your NIM earned. Your savings stay staked and keep paying you.</p>
+    <section class="spend-block">
+      <h3 class="label">1. Cash out your earnings</h3>
+      <p>${amt > 0 ? `You've earned <b>${nim(amt)} NIM</b>${price() !== undefined ? ` (${fiat(amt, price(), S.currency)})` : ''}. Move exactly that to your wallet; it arrives after the 12-hour cooldown.` : 'Nothing earned to cash out yet. Your first pay usually lands within a day.'}</p>
+      <button class="btn btn-block" data-a="cashOut" ${amt > 0 && !S.busy && !S.pending ? '' : 'disabled'}>Cash out ${amt > 0 ? nim(amt) + ' NIM' : 'earnings'}</button>
+    </section>
+    <section class="spend-block">
+      <h3 class="label">2. Pay anything that takes Lightning</h3>
+      <p class="hint">Paste a Lightning invoice from any shop, bill or friend. Nimiq Pay pays it with your NIM and the merchant receives bitcoin.</p>
+      <textarea class="field" id="ln-in" rows="3" placeholder="lnbc…" autocomplete="off" spellcheck="false" ${lnOk ? '' : 'disabled'}>${esc(S.invoice)}</textarea>
+      <p class="msg" id="ln-out" aria-live="polite"></p>
+      <button class="btn btn-primary btn-block" data-a="payInvoice" ${lnOk && !S.busy && !S.pending ? '' : 'disabled'}>${S.busy ? esc(S.busy) + '…' : 'Pay invoice'}</button>
+      ${lnOk ? '' : '<p class="hint">Lightning payments only work on mainnet.</p>'}
+    </section>
+    <section class="spend-block">
+      <h3 class="label">3. Spend it in other Nimiq Pay apps</h3>
+      <ul class="partners">${PARTNERS.map(p => `<li><a href="${openInPay(p.url)}"><b>${p.name}</b><span class="hint">${p.what}</span></a></li>`).join('')}</ul>
+    </section>`,
+  })
+  setTimeout(updateInvoice, 0)
+}
+
+// 5. Circles ──────────────────────────────────────────────────────────────────
+function seedDemoCircle() {
+  const fake = (seed: string) => 'NQ00 ' + seed.padEnd(32, '0').slice(0, 32).replace(/(.{4})/g, '$1 ').trim()
+  const cc: Circle = { id: 'demo', name: 'Family savers', goal: 120, members: [
+    { a: fake('DEM0AAAA'), n: 'Mama' }, { a: fake('DEM0BBBB'), n: 'Tunde' }, { a: fake('DEM0CCCC'), n: 'Ada' }, { a: fake('DEM0DDDD'), n: 'Kemi' },
+  ] }
+  S.circles = [...S.circles.filter(x => x.id !== 'demo'), cc]
+}
+const DEMO_STAKES: Record<string, number> = { Mama: 40_000, Tunde: 18_500, Ada: 0, Kemi: 9_000 }
+
+async function loadCircle(cc: Circle) {
+  const rateOf = (deleg: string | null) => rateFor(deleg ? S.validators.find(v => sameAddress(v.address, deleg)) ?? null : null)
+  for (const m of cc.members) {
+    const key = cleanAddress(m.a)
+    if (sameAddress(m.a, S.wallet?.address)) {
+      const s = S.staker
+      S.circleData[key] = s ? { staked: s.balance, weekly: s.balance * rateOf(s.delegation) * 7 / 365 } : null
+      continue
+    }
+    if (cc.id === 'demo') {
+      const st = (DEMO_STAKES[m.n] ?? 0) * LUNA
+      S.circleData[key] = st ? { staked: st, weekly: st * (S.apr ?? 0) * 7 / 365 } : null
+      continue
+    }
+    S.circleData[key] = 'loading'
+  }
+  render()
+  await Promise.all(cc.members.filter(m => S.circleData[cleanAddress(m.a)] === 'loading').map(async m => {
+    try {
+      const st = await getStaker(S.net, m.a)
+      S.circleData[cleanAddress(m.a)] = st && st.balance ? { staked: st.balance, weekly: st.balance * rateOf(st.delegation) * 7 / 365 } : null
+    }
+    catch { S.circleData[cleanAddress(m.a)] = null }
+  }))
+  render()
+}
+
+function circlesView(): string {
+  if (S.joinCircle) {
+    const cc = S.joinCircle
+    return `<section class="intro"><h1>Join ${esc(cc.name)}</h1><p class="lede">${cc.members.length} ${cc.members.length === 1 ? 'person is' : 'people are'} in this circle. Everyone stakes their own NIM; nobody holds anyone's money.</p></section>
+    <section class="panel">
+      <label class="label" for="j-nick">Your name in the circle</label><input class="field" id="j-nick" maxlength="24" placeholder="Your first name" autocomplete="off">
+      <p class="hint">Joining shares your account address with the circle, so they can see your staking. It's public on the blockchain anyway.</p>
+      <button class="btn btn-primary btn-block" data-a="joinCircle">Join circle</button>
+      <button class="link link-center" data-a="skipJoin">Not now</button>
+    </section>`
+  }
+  const cc = S.circles.find(x => x.id === S.circle)
+  if (cc) {
+    const data = cc.members.map(m => ({ m, d: S.circleData[cleanAddress(m.a)] }))
+    const weekly = data.reduce((s, x) => s + (x.d && x.d !== 'loading' ? x.d.weekly : 0), 0)
+    const staking = data.filter(x => x.d && x.d !== 'loading').length
+    const goal = cc.goal * LUNA
+    const p = goal ? Math.min(1, weekly / goal) : 0
+    return `<button class="link" data-a="closeCircle">All circles</button>
+    <section class="paycheck" aria-label="${esc(cc.name)} group paycheck">
+      <p class="paycheck-label">${esc(cc.name)} earns together</p>
+      <p class="paycheck-amount"><span class="num">${nim(weekly)}</span> NIM a week</p>
+      <p class="paycheck-fiat">${staking} of ${cc.members.length} members staking${price() !== undefined ? `, about ${fiat(weekly, price(), S.currency)} a week` : ''}</p>
+      ${goal ? `<div class="meter meter-dark" role="progressbar" aria-label="Group goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="transform:scaleX(${p.toFixed(3)})"></i></div>
+      <p class="paycheck-today">Goal: ${nim(goal)} NIM a week, ${Math.round(p * 100)}% there</p>` : ''}
+    </section>
+    <section class="panel" aria-label="Members">
+      <h2 class="label">Members</h2>
+      <ul class="members">${data.sort((a, b) => ((b.d && b.d !== 'loading') ? b.d.weekly : -1) - ((a.d && a.d !== 'loading') ? a.d.weekly : -1)).map(({ m, d }) => `<li>
+        <span class="member-avatar" aria-hidden="true">${esc((m.n || '?').slice(0, 1).toUpperCase())}</span>
+        <span class="member-text"><b>${esc(m.n || 'Member')}${sameAddress(m.a, S.wallet?.address) ? ' (you)' : ''}</b><span class="hint">${d === 'loading' ? 'checking…' : d ? `${nim(d.staked)} NIM staked` : 'not staking yet'}</span></span>
+        <span class="num member-pay">${d && d !== 'loading' ? `${nim(d.weekly)}<small> /wk</small>` : '–'}</span>
+      </li>`).join('')}</ul>
+      ${data.some(x => x.d === null) ? '<p class="hint">Members who aren\'t staking yet are missing out on their share. Send them the circle link.</p>' : ''}
+    </section>
+    <div class="actions"><button class="btn btn-primary" data-a="inviteCircle">Invite friends</button><button class="btn" data-a="leaveCircle">Leave circle</button></div>
+    <p class="hint">No server: the circle lives in its link. When someone joins, share the newest link so everyone sees them.</p>`
+  }
+  return `<section class="intro"><h1>Payday Circles</h1><p class="lede">Ajo, but nobody holds the money. Stake together with family and friends, watch your group paycheck, and keep each other going.</p></section>
+  ${S.circles.length ? `<ul class="lessons">${S.circles.map(x => `<li><button class="lesson-row" data-a="openCircle" data-id="${esc(x.id)}">
+    <span class="lesson-n" aria-hidden="true">${esc(x.name.slice(0, 1).toUpperCase())}</span>
+    <span class="lesson-text"><b>${esc(x.name)}</b><span class="hint">${x.members.length} member${x.members.length === 1 ? '' : 's'}${x.goal ? `, goal ${nim(x.goal * LUNA)} NIM a week` : ''}</span></span></button></li>`).join('')}</ul>` : ''}
+  <button class="btn btn-primary btn-block" data-a="sheet" data-sheet="newcircle" ${S.wallet ? '' : 'disabled'}>Start a circle</button>
+  <ol class="how">
+    <li><b>Start a circle</b> and share its link in your group chat.</li>
+    <li><b>Everyone stakes their own NIM</b> in their own Nimiq Pay. No one collects money, so no one can run off with it.</li>
+    <li><b>Watch the group paycheck grow</b> and see who still needs to start.</li>
+  </ol>`
 }
 
 let lastSheet: Sheet = null
@@ -936,6 +1347,9 @@ function render() {
       <button class="btn btn-primary btn-block" data-a="connect">Connect account</button>
     </section>`
   }
+  else if (S.phase === 'verify') {
+    main = verifyView()
+  }
   else if (S.phase === 'error') {
     main = `<section class="intro"><h1>Payday couldn't start</h1><p class="lede">${esc(S.fatal)}</p><button class="btn btn-primary btn-block" data-a="retry">Try again</button></section>`
   }
@@ -943,7 +1357,7 @@ function render() {
     main = (S.dataError ? `<div class="notice notice-err" role="alert"><span>${esc(S.dataError)}</span><button class="link" data-a="refresh">Retry</button></div>` : '')
       + (!S.synced ? '<p class="notice">Nimiq Pay is still syncing with the network. Numbers may lag for a moment.</p>' : '')
       + (isDemo() ? '<p class="notice">Demo with pretend NIM and real network rates. Open Payday in Nimiq Pay to stake for real.</p>' : '')
-      + (S.tab === 'plan' ? planView() : S.tab === 'learn' ? learnView()
+      + (S.tab === 'plan' ? planView() : S.tab === 'learn' ? learnView() : S.tab === 'circles' ? circlesView()
         : !S.validators.length && S.dataError ? '' : S.staker && totalStaked() > 0 ? homeStaking() : homeNotStaking())
   }
   const t = S.toast ? `<div class="toast ${S.toast.kind === 'err' ? 'toast-err' : ''}" role="${S.toast.kind === 'err' ? 'alert' : 'status'}">${esc(S.toast.text)}</div>` : ''
@@ -956,7 +1370,7 @@ function render() {
   const focused = document.activeElement?.id
   const listScroll = document.querySelector('.vlist')?.scrollTop ?? 0
   const sheetScroll = S.sheet === lastSheet ? document.querySelector('.sheet')?.scrollTop ?? 0 : 0
-  app.innerHTML = `${header()}<main>${main}</main>${S.phase === 'ready' ? tabBar() : ''}${sheet()}${approvalModal()}${t}`
+  app.innerHTML = `${header()}<main>${main}</main>${S.phase === 'ready' ? tabBar() : ''}${sheet()}${revealModal()}${approvalModal()}${t}`
   const sh = document.querySelector('.sheet'); if (sh && sheetScroll) sh.scrollTop = sheetScroll
   lastSheet = S.sheet
   for (const [id, val] of Object.entries(kept)) {
@@ -984,5 +1398,8 @@ function tick() {
   setTimeout(tick, 250)
 }
 tick()
+
+// Opening a payslip or circle link while Payday is already open: start fresh with that link.
+window.addEventListener('hashchange', () => { if (/^#(verify|circle)=/.test(location.hash.replace('#circle', '#circle').replace(/^#.*?(circle=)/, '#circle='))) location.reload() })
 
 start()

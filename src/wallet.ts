@@ -4,6 +4,7 @@
 
 import { init, getHostNetwork, getHostFiat, getHostLanguage, NimiqProviderError, type NimiqProvider } from '@nimiq/mini-app-sdk'
 import type { Net, Staker } from './chain'
+import { demoSign } from './crypto'
 
 export type WalletKind = 'nimiq-pay' | 'demo'
 
@@ -23,6 +24,10 @@ export interface Wallet {
   retire(luna: number): Promise<string>
   remove(luna: number): Promise<string>
   switchValidator(delegation: string): Promise<string>
+  /** Sign a text message (Nimiq signed-message format). */
+  sign(message: string): Promise<{ publicKey: string, signature: string }>
+  /** Pay a fixed-amount Lightning invoice with NIM or USDT through Nimiq Pay (mainnet only). */
+  payLightning(invoice: string): Promise<string>
   // demo only
   demo?: DemoState
 }
@@ -83,6 +88,11 @@ export async function connectNimiqPay(onAccounts: (accounts: string[]) => void):
     retire: wrap((retireStake: number) => nimiq.sendRetireStakeTransaction({ retireStake })),
     remove: wrap((value: number) => nimiq.sendRemoveStakeTransaction({ value })),
     switchValidator: wrap((newDelegation: string) => nimiq.sendUpdateStakerTransaction({ newDelegation, reactivateAllStake: true })),
+    async sign(message: string) {
+      try { const r = await nimiq.sign(message); return { publicKey: r.publicKey, signature: r.signature } }
+      catch (e) { explain(e) }
+    },
+    payLightning: wrap(async (invoice: string) => { const r = await nimiq.payLightningInvoice({ invoice }); return r.hash }),
   }
   return wallet
 }
@@ -122,5 +132,7 @@ export function demoWallet(head: number): Wallet {
       return ok()
     },
     async switchValidator(delegation) { staker().delegation = delegation; return ok() },
+    sign: (message: string) => demoSign(message),
+    async payLightning() { return ok() },
   }
 }

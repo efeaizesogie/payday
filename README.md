@@ -6,6 +6,20 @@ Most people don't think in "APY" or "delegation". They think in paychecks. Payda
 shows what it pays you **every week** in NIM and your own currency, and makes the three-step Nimiq withdrawal
 (deactivate → unlock → withdraw) obvious.
 
+## What makes it different
+
+- **Money left on the table.** Payday rebuilds your unstaked balance from your own transactions and shows what that idle
+  NIM could have earned since proof-of-stake launched, at the real network rate of each moment (simple interest, rounded
+  down, so it never exaggerates).
+- **Payday, every week.** A weekly reveal counts up what your stake pays you, with your staking streak and milestones.
+- **Verifiable payslip.** Your wallet signs a payslip (Nimiq signed-message format, Ed25519). Anyone with the link sees
+  the signature checked in their browser and your live stake read from the blockchain. Tampering is detected.
+- **Spend your interest, never your savings.** Cash out exactly what you have earned while the rest stays staked, pay any
+  Lightning invoice with NIM through Nimiq Pay's built-in Lightning swaps (mainnet), or spend in AbaPay, NimShop and
+  SwapSpace.
+- **Payday Circles.** Ajo, but nobody holds the money: family and friends each stake their own NIM and watch one group
+  paycheck. No server: the circle lives in its link and members' stakes are read from the chain.
+
 ## What it does
 
 Three tabs: **Paycheck** (your stake, live), **Plan** (what it grows to) and **Learn** (staking in five minutes).

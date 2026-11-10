@@ -98,7 +98,7 @@ export async function getPolicy(net: Net): Promise<Policy> {
 
 export interface Tx {
   hash: string, blockNumber: number, timestamp: number, from: string, to: string,
-  value: number, recipientData: string, senderData: string, executionResult: boolean
+  value: number, fee: number, recipientData: string, senderData: string, executionResult: boolean
 }
 export const getTransactions = (net: Net, address: string, max = 500) =>
   rpc<Tx[]>(net, 'getTransactionsByAddress', [address, max, null])
@@ -258,9 +258,9 @@ export type Currency = typeof CURRENCIES[number]
 let priceCache: { at: number, prices: Record<string, number> } | null = null
 export async function getPrices(): Promise<Record<string, number>> {
   if (priceCache && Date.now() - priceCache.at < 5 * 60_000) return priceCache.prices
-  const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=nimiq-2&vs_currencies=${CURRENCIES.join(',')}`)
+  const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=nimiq-2,bitcoin&vs_currencies=${CURRENCIES.join(',')}`)
   if (!res.ok) throw new ChainError('Price feed unavailable')
   const json = await res.json()
-  priceCache = { at: Date.now(), prices: json['nimiq-2'] ?? {} }
+  priceCache = { at: Date.now(), prices: { ...(json['nimiq-2'] ?? {}), btcUsd: json.bitcoin?.usd } }
   return priceCache.prices
 }
