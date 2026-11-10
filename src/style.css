@@ -126,12 +126,17 @@ main { display: flex; flex-direction: column; gap: var(--s3); padding-top: var(-
 
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
 .top { display: flex; align-items: center; justify-content: space-between; min-height: 56px; }
-.brand { display: flex; align-items: center; gap: var(--s2); font-weight: 800; font-size: var(--t-lg); }
-.logo { width: 32px; height: 32px; flex: none; }
-.logo-hex { fill: var(--logo-bg); stroke: var(--logo-bg); stroke-width: 8; stroke-linejoin: round; }
-.logo-sun { fill: var(--accent); }
-.logo-rays { fill: none; stroke: var(--accent); stroke-width: 3.6; stroke-linecap: round; }
-.pcard .logo-hex { fill: var(--navy-900); stroke: var(--navy-900); }
+.brand { display: flex; align-items: center; gap: var(--s3); font-weight: 800; font-size: var(--t-lg); }
+.logo { width: 36px; height: 36px; flex: none; }
+.pcard .logo { width: 32px; height: 32px; }
+.logo-tile { fill: var(--logo-bg); }
+.logo-paper { fill: var(--on-dark); }
+.logo-gold { fill: var(--accent); }
+.logo-ring { fill: var(--on-dark); stroke: var(--logo-bg); stroke-width: 3.5; }
+.logo-coin { fill: var(--accent); stroke: var(--accent); stroke-width: 5; stroke-linejoin: round; }
+.logo-coin-ring { fill: none; stroke: var(--logo-bg); stroke-width: 3.6; stroke-linejoin: round; }
+.pcard .logo-tile { fill: var(--navy-900); }
+.pcard .logo-ring, .pcard .logo-coin-ring { stroke: var(--navy-900); }
 .tag { font-size: var(--t-xs); font-weight: 700; color: var(--ink-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0 var(--s2); line-height: 22px; }
 .chip { min-height: 36px; min-width: 44px; padding: 0 var(--s3); border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface); font-size: var(--t-sm); font-weight: 700; }
 

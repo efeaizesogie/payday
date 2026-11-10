@@ -1,16 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <title>Payday</title>
-  <!-- Nimiq-style hexagon: the network you earn from -->
-  <polygon points="6,32 19,9.5 45,9.5 58,32 45,54.5 19,54.5" fill="#1f2348" stroke="#1f2348" stroke-width="8" stroke-linejoin="round"/>
-  <!-- the sun rising: the "day" in Payday, your NIM coming up -->
-  <path d="M20.5 39a11.5 11.5 0 0 1 23 0z" fill="#e9b213"/>
-  <!-- three rays: payouts on a rhythm -->
-  <g stroke="#e9b213" stroke-width="3.6" stroke-linecap="round" fill="none">
-    <path d="M32 22.5v-5"/>
-    <path d="M43.7 27.3l3.5-3.5"/>
-    <path d="M20.3 27.3l-3.5-3.5"/>
-    <!-- the horizon, and a payslip line beneath it -->
-    <path d="M14.5 39h35"/>
-    <path d="M26.5 46.5h11" stroke-width="3"/>
-  </g>
+  <!-- Payday: a calendar whose date is a coin. The day your NIM pays you. -->
+  <rect width="120" height="120" rx="28" fill="#1F2348"/>
+  <!-- the calendar page -->
+  <rect x="25" y="31" width="70" height="64" rx="13" fill="#F6F4EC"/>
+  <path d="M25 44a13 13 0 0 1 13-13h44a13 13 0 0 1 13 13v6H25z" fill="#E9B213"/>
+  <!-- binder rings -->
+  <rect x="41" y="21" width="9" height="19" rx="4.5" fill="#F6F4EC" stroke="#1F2348" stroke-width="3.5"/>
+  <rect x="70" y="21" width="9" height="19" rx="4.5" fill="#F6F4EC" stroke="#1F2348" stroke-width="3.5"/>
+  <!-- the date is a Nimiq-hexagon coin -->
+  <polygon points="44.5,72.5 52.25,59.1 67.75,59.1 75.5,72.5 67.75,85.9 52.25,85.9" fill="#E9B213" stroke="#E9B213" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="52.5,72.5 56.25,66 63.75,66 67.5,72.5 63.75,79 56.25,79" fill="none" stroke="#1F2348" stroke-width="3.6" stroke-linejoin="round"/>
 </svg>

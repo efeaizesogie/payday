@@ -434,8 +434,8 @@ function appLink() {
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
-// Logo: a sun rising inside Nimiq's hexagon. The day your NIM pays you, coming up over the horizon.
-const logo = `<svg viewBox="0 0 64 64" class="logo" aria-hidden="true"><polygon class="logo-hex" points="6,32 19,9.5 45,9.5 58,32 45,54.5 19,54.5"/><path class="logo-sun" d="M20.5 39a11.5 11.5 0 0 1 23 0z"/><g class="logo-rays"><path d="M32 22.5v-5"/><path d="M43.7 27.3l3.5-3.5"/><path d="M20.3 27.3l-3.5-3.5"/><path d="M14.5 39h35"/><path d="M26.5 46.5h11" stroke-width="3"/></g></svg>`
+// Logo: a calendar whose date is a Nimiq-hexagon coin. The day your NIM pays you.
+const logo = `<svg viewBox="0 0 120 120" class="logo" aria-hidden="true"><rect class="logo-tile" width="120" height="120" rx="28"/><rect class="logo-paper" x="25" y="31" width="70" height="64" rx="13"/><path class="logo-gold" d="M25 44a13 13 0 0 1 13-13h44a13 13 0 0 1 13 13v6H25z"/><rect class="logo-ring" x="41" y="21" width="9" height="19" rx="4.5"/><rect class="logo-ring" x="70" y="21" width="9" height="19" rx="4.5"/><polygon class="logo-coin" points="44.5,72.5 52.25,59.1 67.75,59.1 75.5,72.5 67.75,85.9 52.25,85.9"/><polygon class="logo-coin-ring" points="52.5,72.5 56.25,66 63.75,66 67.5,72.5 63.75,79 56.25,79"/></svg>`
 
 const fmtDate = (t: number) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
