@@ -18,7 +18,7 @@ export function fiat(luna: number, price: number | undefined, currency: string):
   const v = (luna / LUNA) * price
   const digits = v !== 0 && Math.abs(v) < 0.01 ? 4 : v < 1000 ? 2 : 0
   try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v)
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), currencyDisplay: 'narrowSymbol', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v)
   }
   catch { return `${nf(digits, digits).format(v)} ${currency.toUpperCase()}` }
 }

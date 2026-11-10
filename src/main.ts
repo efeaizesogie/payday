@@ -375,6 +375,16 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.sheet) {
 function focusSheet() { setTimeout(() => (document.querySelector('.sheet input') as HTMLInputElement | null)?.focus(), 60) }
 const set = (id: string, t: string) => { const n = document.getElementById(id); if (n) n.textContent = t }
 
+/** "≈ $3.24": the typed NIM amount in the chosen currency. */
+function fiatLine(luna: number): string {
+  const p = price()
+  if (p === undefined) return ''
+  return `≈ ${fiat(Number.isFinite(luna) && luna > 0 ? luna : 0, p, S.currency)}`
+}
+const amtFiat = (id: string) => `<div class="amt-fiat"><span class="num" id="fiat-${id}" aria-live="polite"></span><button class="link" data-a="sheet" data-sheet="settings" aria-label="Change currency, now ${S.currency.toUpperCase()}">${S.currency.toUpperCase()}</button></div>`
+const walletLine = (id: string, label: string, luna: number) =>
+  `<p class="hint" id="${id}">${label}: ${nim(luna)} NIM${price() !== undefined ? ` (${fiat(luna, price(), S.currency)})` : ''}</p>`
+
 function updateCalc(input: HTMLInputElement) {
   const luna = parseNim(input.value)
   const isNew = input.id === 'amt-new'
@@ -386,9 +396,12 @@ function updateCalc(input: HTMLInputElement) {
   set('calc-week-fiat', w && price() !== undefined ? fiat(w, price(), S.currency) : '')
   set('calc-month', nim(w * 365 / 12 / 7))
   set('calc-year', nim(w * 365 / 7))
+  set(isNew ? 'fiat-new' : 'fiat-add', fiatLine(ok ? luna : 0))
   const problem = ok ? stakeProblem(luna, isNew) : null
   set('calc-err', problem ?? '')
-  set('calc-warn', ok && !problem && overBalance(luna) ? `That's more than Payday can see in your wallet (${nim(S.spendable)} NIM). Nimiq Pay will check before anything is sent.` : '')
+  set('calc-warn', ok && !problem && overBalance(luna)
+    ? (isDemo() ? `The demo wallet only has ${nim(S.spendable)} NIM.` : `That's more than Payday can see in your wallet (${nim(S.spendable)} NIM). Nimiq Pay will check before anything is sent.`)
+    : '')
   const btn = document.getElementById(isNew ? 'go-new' : 'go-add')
   if (btn && !S.busy && !S.pending) btn.textContent = ok && !problem ? `Stake ${nim(luna)} NIM` : isNew ? 'Start getting paid' : 'Add to my stake'
 }
@@ -398,6 +411,7 @@ function updateWithdrawCalc() {
   const s = S.staker
   if (!s) return
   const ok = Number.isFinite(luna) && luna > 0 && luna <= s.balance
+  set('fiat-out', fiatLine(luna))
   set('out-week', ok ? `Your weekly pay drops to ${nim(weeklyPay(s.balance - luna, myValidator()))} NIM.` : '')
 }
 
@@ -420,7 +434,8 @@ function appLink() {
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
-const logo = `<svg viewBox="0 0 32 32" class="logo" aria-hidden="true"><path class="logo-hex" d="M9.6 2h12.8a3 3 0 0 1 2.6 1.5l6.4 11a3 3 0 0 1 0 3l-6.4 11A3 3 0 0 1 22.4 30H9.6A3 3 0 0 1 7 28.5l-6.4-11a3 3 0 0 1 0-3L7 3.5A3 3 0 0 1 9.6 2z"/><path class="logo-p" d="M12.4 9.5h4.9a3.9 3.9 0 0 1 0 7.8h-2.4v5.2h-2.5zm2.5 2.3v3.2h2.3a1.6 1.6 0 0 0 0-3.2z"/></svg>`
+// Logo: a sun rising inside Nimiq's hexagon. The day your NIM pays you, coming up over the horizon.
+const logo = `<svg viewBox="0 0 64 64" class="logo" aria-hidden="true"><polygon class="logo-hex" points="6,32 19,9.5 45,9.5 58,32 45,54.5 19,54.5"/><path class="logo-sun" d="M20.5 39a11.5 11.5 0 0 1 23 0z"/><g class="logo-rays"><path d="M32 22.5v-5"/><path d="M43.7 27.3l3.5-3.5"/><path d="M20.3 27.3l-3.5-3.5"/><path d="M14.5 39h35"/><path d="M26.5 46.5h11" stroke-width="3"/></g></svg>`
 
 const fmtDate = (t: number) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
@@ -617,7 +632,8 @@ function homeNotStaking() {
   <section class="panel">
     <label for="amt-new" class="label">How much NIM should work for you?</label>
     <div class="amount"><input id="amt-new" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0" aria-describedby="avail-new" value="${S.spendable >= minStake() ? Math.floor(S.spendable * 0.5 / LUNA) : ''}"><span aria-hidden="true">NIM</span></div>
-    <p class="hint" id="avail-new">In your wallet: ${nim(S.spendable)} NIM</p>
+    ${amtFiat('new')}
+    ${walletLine('avail-new', 'In your wallet', S.spendable)}
     ${presets('amt-new', [0.25, 0.5, 0.75, 1])}
     ${payRows('Weekly pay')}
   </section>
@@ -729,7 +745,8 @@ function sheet(): string {
     case 'add':
       title = 'Stake more'
       body = `<div class="amount"><input id="amt-add" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0" aria-label="Amount to add" aria-describedby="avail-add"><span aria-hidden="true">NIM</span></div>
-      <p class="hint" id="avail-add">In your wallet: ${nim(S.spendable)} NIM</p>
+      ${amtFiat('add')}
+      ${walletLine('avail-add', 'In your wallet', S.spendable)}
       ${presets('amt-add', [0.25, 0.5, 0.75, 1])}
       ${payRows('New weekly pay')}
       <button class="btn btn-primary btn-block" id="go-add" data-a="stakeMore" ${S.busy || S.pending ? 'disabled' : ''}>${busyLabel('Add to my stake')}</button>`
@@ -738,7 +755,8 @@ function sheet(): string {
       title = 'Withdraw'
       body = `<p class="lede">Withdrawn NIM stops earning and cools down for about 12 hours. Then you unlock it and move it to your wallet. You can cancel while it cools down.</p>
       <div class="amount"><input id="amt-out" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0" aria-label="Amount to withdraw" aria-describedby="avail-out"><span aria-hidden="true">NIM</span></div>
-      <p class="hint" id="avail-out">Staked: ${nim(s?.balance ?? 0)} NIM</p>
+      ${amtFiat('out')}
+      ${walletLine('avail-out', 'Staked', s?.balance ?? 0)}
       ${presets('amt-out', [0.25, 0.5, 1], s?.balance ?? 0)}
       <p class="msg" id="out-week"></p>
       <button class="btn btn-ink btn-block" data-a="withdraw" ${S.busy || S.pending ? 'disabled' : ''}>${busyLabel('Start withdrawal')}</button>`
