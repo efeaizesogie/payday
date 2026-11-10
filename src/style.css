@@ -323,6 +323,22 @@ main { display: flex; flex-direction: column; gap: var(--s3); padding-top: var(-
 .activity li { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s2) 0; font-size: var(--t-sm); }
 .activity time { white-space: nowrap; }
 
+
+/* ── Connect screen, approval (demo of Nimiq Pay's native prompt) ─────────── */
+.trust { list-style: none; padding: 0; display: flex; flex-direction: column; gap: var(--s3); margin: var(--s2) 0 var(--s4); color: var(--ink-2); }
+.trust li { padding: var(--s3) var(--s4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.trust b { color: var(--ink); }
+.approval-wrap { position: fixed; inset: 0; z-index: 30; background: var(--scrim); display: grid; place-items: center; padding: var(--s4); }
+.approval { width: 100%; max-width: 360px; background: var(--surface); color: var(--ink); border-radius: var(--r-xl); padding: var(--s5); display: flex; flex-direction: column; gap: var(--s3); box-shadow: var(--shadow); }
+.approval-wrap { animation: fade var(--dur-short); }
+.approval-tag { align-self: flex-start; font-size: var(--t-xs); font-weight: 700; color: var(--ink-2); border: 1px dashed var(--line); border-radius: var(--r-sm); padding: 0 var(--s2); line-height: 22px; }
+.approval h2 { font-size: var(--t-xl); font-weight: 800; }
+.approval-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-md); }
+.approval-rows div { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s2) var(--s3); font-size: var(--t-sm); }
+.approval-rows div + div { border-top: 1px solid var(--line); }
+.approval-rows dt { color: var(--ink-2); }
+.approval-rows dd { font-weight: 700; text-align: right; }
+
 /* ── Loading, toast ──────────────────────────────────────────────────────── */
 .skel { display: flex; flex-direction: column; gap: var(--s3); padding-top: var(--s4); }
 .skel-block { color: var(--ink); height: 120px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); animation: breathe 1.4s ease-in-out infinite; }
@@ -333,6 +349,6 @@ main { display: flex; flex-direction: column; gap: var(--s3); padding-top: var(-
 .toast-err { background: var(--bad-fill); color: var(--on-bad); }
 
 @media (prefers-reduced-motion: reduce) {
-  .backdrop.anim, .backdrop.anim .sheet, .toast, .skel-block { animation: none; }
+  .backdrop.anim, .backdrop.anim .sheet, .toast, .skel-block, .approval-wrap { animation: none; }
   .btn, .presets button, .vrow.pickable, .meter i { transition: none; }
 }

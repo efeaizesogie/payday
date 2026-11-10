@@ -16,7 +16,9 @@ type Theme = 'system' | 'light' | 'dark'
 interface Activity { t: number, text: string }
 interface Paid { amount: number, since: number, tracked: boolean }
 const S = {
-  phase: 'loading' as 'loading' | 'outside' | 'error' | 'ready',
+  phase: 'loading' as 'loading' | 'outside' | 'connect' | 'error' | 'ready',
+  demoConnect: false, // the connect screen is the demo's walkthrough, not a real decline
+  approval: null as null | { title: string, rows: [string, string][], note: string, ok: string, resolve: (ok: boolean) => void },
   fatal: '',
   wallet: null as Wallet | null,
   net: 'mainnet' as Net,
@@ -158,10 +160,61 @@ async function start() {
     S.wallet = await connectNimiqPay(() => refresh())
   }
   catch (e) {
-    if (e instanceof WalletError && e.message === 'NOT_IN_NIMIQ_PAY') { S.phase = 'outside'; render(); return }
+    if (e instanceof WalletError && e.message === 'NOT_IN_NIMIQ_PAY') {
+      // Demo deep links for judges and screenshots: #demo, #demo-staked, &tab=plan|learn, &lesson=<id>
+      const h = new URLSearchParams(location.hash.slice(1).replace(/^demo(-staked)?/, m => `mode=${m}`))
+      if (location.hash === '#connect') { S.phase = 'connect'; S.demoConnect = true; render(); return }
+      if (h.get('mode')) return startDemoLink(h)
+      S.phase = 'outside'; render(); return
+    }
+    if (e instanceof WalletError && e.message === 'NOT_CONNECTED') { S.phase = 'connect'; S.demoConnect = false; render(); return }
     S.phase = 'error'; S.fatal = e instanceof Error ? e.message : String(e); render(); return
   }
   await enter()
+}
+
+/**
+ * In the demo, act out what Nimiq Pay does for real: a native approval for every wallet action.
+ * The mock is labelled as a demo and only explains; it never asks for anything sensitive.
+ */
+function askApproval(title: string, rows: [string, string][], note: string, ok = 'Approve'): Promise<boolean> {
+  return new Promise(resolve => { S.approval = { title, rows, note, ok, resolve }; render() })
+}
+const vName = (addr: string) => S.validators.find(v => sameAddress(v.address, addr))?.name ?? shortAddress(addr)
+function withDemoApprovals(w: Wallet): Wallet {
+  const gate = async (title: string, rows: [string, string][], run: () => Promise<string>) => {
+    if (!(await askApproval(title, rows, 'Nimiq Pay shows this before anything is sent. Nothing moves until you approve it there.'))) throw new WalletError('You cancelled. Nothing was sent.', true)
+    return run()
+  }
+  const fee: [string, string] = ['Network fee', '0 NIM']
+  return {
+    ...w,
+    newStaker: (d, l) => gate('Stake NIM', [['Amount', `${nim(l)} NIM`], ['Validator', vName(d)], fee], () => w.newStaker(d, l)),
+    addStake: l => gate('Add to stake', [['Amount', `${nim(l)} NIM`], fee], () => w.addStake(l)),
+    setActive: l => gate('Change active stake', [['Earning after this', `${nim(l)} NIM`], fee], () => w.setActive(l)),
+    retire: l => gate('Unlock stake', [['Amount', `${nim(l)} NIM`], fee], () => w.retire(l)),
+    remove: l => gate('Withdraw to wallet', [['Amount', `${nim(l)} NIM`], fee], () => w.remove(l)),
+    switchValidator: d => gate('Switch validator', [['New validator', vName(d)], fee], () => w.switchValidator(d)),
+  }
+}
+
+async function startDemoLink(h: URLSearchParams) {
+  const head = await getHead('mainnet').catch(() => 0)
+  S.wallet = h.get('mode') === 'demo-staked' ? demoWallet(head) : withDemoApprovals(demoWallet(head))
+  await enter()
+  if (h.get('mode') === 'demo-staked' && S.pick) {
+    await S.wallet.newStaker(S.pick.address, 12_500 * LUNA)
+    if (S.goalWeekly === 0) S.goalWeekly = 30
+    logActivity('12,500 NIM is now working for you.')
+    await refresh()
+  }
+  const theme = h.get('theme')
+  if (theme === 'dark' || theme === 'light') { S.theme = theme; applyTheme() }
+  const tab = h.get('tab')
+  if (tab === 'plan' || tab === 'learn') S.tab = tab
+  const lesson = h.get('lesson')
+  if (lesson && LESSONS.some(l => l.id === lesson)) { S.lesson = lesson; S.sheet = 'lesson' }
+  render()
 }
 
 async function enter() {
@@ -235,12 +288,22 @@ function stakeProblem(luna: number, isNew: boolean): string | null {
 const overBalance = (luna: number) => !isDemo() ? luna > S.spendable && S.spendable > 0 : luna > S.spendable
 
 const actions: Record<string, (el: HTMLElement) => void> = {
-  demo: async () => {
+  demo: () => { S.phase = 'connect'; S.demoConnect = true; render() },
+  connect: async () => {
+    if (S.demoConnect) {
+      const ok = await askApproval('Share your account?', [['App', 'Payday'], ['It can see', 'Your account address and balance'], ['It cannot', 'Spend, move or see your keys']], 'This is the first thing a user sees when they open Payday in Nimiq Pay.', 'Allow')
+      if (!ok) { toast('Without your address Payday can only show the demo screen. Tap Connect to try again.'); return }
+      S.phase = 'loading'; render()
+      const head = await getHead('mainnet').catch(() => 0)
+      S.wallet = withDemoApprovals(demoWallet(head))
+      await enter()
+      return
+    }
     S.phase = 'loading'; render()
-    const head = await getHead('mainnet').catch(() => 0)
-    S.wallet = demoWallet(head)
-    await enter()
+    start()
   },
+  approve: () => { const a = S.approval; S.approval = null; a?.resolve(true) },
+  deny: () => { const a = S.approval; S.approval = null; a?.resolve(false) },
   retry: () => location.reload(),
   sheet: el => { S.sheet = el.dataset.sheet as Sheet; render(); focusSheet() },
   close: () => { S.sheet = null; render() },
@@ -736,6 +799,18 @@ function homeStaking() {
   ${activityPanel()}`
 }
 
+function approvalModal(): string {
+  const a = S.approval
+  if (!a) return ''
+  return `<div class="approval-wrap"><div class="approval" role="alertdialog" aria-modal="true" aria-labelledby="ap-title" aria-describedby="ap-note">
+    <p class="approval-tag">Demo of the Nimiq Pay approval</p>
+    <h2 id="ap-title">${esc(a.title)}</h2>
+    <dl class="approval-rows">${a.rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+    <p class="hint" id="ap-note">${esc(a.note)}</p>
+    <div class="actions"><button class="btn" data-a="deny">Cancel</button><button class="btn btn-primary" data-a="approve">${esc(a.ok)}</button></div>
+  </div></div>`
+}
+
 function sheet(): string {
   if (!S.sheet) return ''
   const s = S.staker
@@ -848,6 +923,19 @@ function render() {
       <p class="hint">The demo uses pretend NIM with live network rates. Nothing is sent.</p>
     </section>`
   }
+  else if (S.phase === 'connect') {
+    main = `<section class="intro intro-outside">
+      ${S.demoConnect ? '<p class="notice">Demo: this is what a user sees the first time they open Payday in Nimiq Pay.</p>' : ''}
+      <h1>Connect your Nimiq Pay account</h1>
+      <p class="lede">Payday needs your account address to show your NIM and what it can earn.</p>
+      <ul class="trust">
+        <li><b>Only your address.</b> Payday never sees your keys or recovery words.</li>
+        <li><b>You approve every action.</b> Nimiq Pay asks before any NIM moves.</li>
+        <li><b>Nothing to sign up for.</b> No email, no password, no server.</li>
+      </ul>
+      <button class="btn btn-primary btn-block" data-a="connect">Connect account</button>
+    </section>`
+  }
   else if (S.phase === 'error') {
     main = `<section class="intro"><h1>Payday couldn't start</h1><p class="lede">${esc(S.fatal)}</p><button class="btn btn-primary btn-block" data-a="retry">Try again</button></section>`
   }
@@ -868,7 +956,7 @@ function render() {
   const focused = document.activeElement?.id
   const listScroll = document.querySelector('.vlist')?.scrollTop ?? 0
   const sheetScroll = S.sheet === lastSheet ? document.querySelector('.sheet')?.scrollTop ?? 0 : 0
-  app.innerHTML = `${header()}<main>${main}</main>${S.phase === 'ready' ? tabBar() : ''}${sheet()}${t}`
+  app.innerHTML = `${header()}<main>${main}</main>${S.phase === 'ready' ? tabBar() : ''}${sheet()}${approvalModal()}${t}`
   const sh = document.querySelector('.sheet'); if (sh && sheetScroll) sh.scrollTop = sheetScroll
   lastSheet = S.sheet
   for (const [id, val] of Object.entries(kept)) {

@@ -60,8 +60,12 @@ export async function connectNimiqPay(onAccounts: (accounts: string[]) => void):
   catch { throw new WalletError(insideNimiqPay() ? 'Nimiq Pay did not respond. Close Payday and open it again.' : 'NOT_IN_NIMIQ_PAY') }
   let accounts: string[]
   try { accounts = await nimiq.listAccounts() }
-  catch (e) { explain(e) }
-  if (!accounts?.length) throw new WalletError('No Nimiq account was shared. Open Payday again and allow access.')
+  catch (e) {
+    // The user tapped Cancel on Nimiq Pay's "share your account" prompt: offer to connect again.
+    if (NimiqProviderError.is(e) && e.type === 'PERMISSION_DENIED') throw new WalletError('NOT_CONNECTED', true)
+    explain(e)
+  }
+  if (!accounts?.length) throw new WalletError('NOT_CONNECTED', true)
   // Pay rotates its remote (HTLC) account and announces the new list.
   try { nimiq.on('accountsChanged', (a: string[]) => { if (a?.length) { wallet.address = a[0]; wallet.accounts = a; onAccounts(a) } }) }
   catch { /* older host without the event */ }
