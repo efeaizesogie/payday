@@ -155,12 +155,47 @@ export async function getEarnings(net: Net, owner: string, sources: string[]): P
 }
 
 // ── Reward rate: today's real emission, not a marketing number ───────────────
-export async function networkApr(net: Net): Promise<number> {
+export interface NetStats {
+  apr: number // yearly rate on staked NIM today, before validator fee
+  staked: number // NIM in the staking contract
+  supply: number // NIM in existence now
+  dailyEmission: number // new NIM per day right now
+  inflation: number // yearly supply growth right now
+  stakedRatio: number
+  net: Net
+}
+const supplyOpts = (net: Net) => ({ network: net === 'testnet' ? 'test-albatross' as const : 'main-albatross' as const })
+export const supplyAt = (net: Net, t: number) => posSupplyAt(t, supplyOpts(net))
+
+export async function networkStats(net: Net): Promise<NetStats> {
   const now = Date.now()
-  const opts = { network: net === 'testnet' ? 'test-albatross' as const : 'main-albatross' as const }
-  const daily = posSupplyAt(now + 86_400_000, opts) - posSupplyAt(now, opts)
+  const supply = supplyAt(net, now)
+  const daily = supplyAt(net, now + 86_400_000) - supply
   const staked = (await getTotalStaked(net)) / LUNA
-  return (daily * 365) / staked
+  return { apr: (daily * 365) / staked, staked, supply, dailyEmission: daily, inflation: (daily * 365) / supply, stakedRatio: staked / supply, net }
+}
+
+/**
+ * Month-by-month projection using Nimiq's real emission curve (rewards decay over time),
+ * assuming the share of supply that is staked stays where it is today.
+ */
+export function project(net: Net, stats: NetStats, amountNim: number, months: number, fee: number, restake: boolean) {
+  const start = Date.now()
+  const month = 30.44 * 86_400_000
+  let bal = amountNim
+  let paidOut = 0
+  const points: { m: number, staked: number, share: number, idleShare: number }[] = []
+  const share0 = amountNim / stats.supply
+  for (let m = 0; m <= months; m++) {
+    const t = start + m * month
+    const supply = supplyAt(net, t)
+    points.push({ m, staked: bal + paidOut, share: (bal + paidOut) / supply / share0, idleShare: amountNim / supply / share0 })
+    const em = supplyAt(net, t + month) - supply
+    const reward = (restake ? bal : amountNim) * em / (stats.stakedRatio * supply) * (1 - fee)
+    if (restake) bal += reward
+    else paidOut += reward
+  }
+  return points
 }
 
 // ── Validators ───────────────────────────────────────────────────────────────

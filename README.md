@@ -8,6 +8,9 @@ shows what it pays you **every week** in NIM and your own currency, and makes th
 
 ## What it does
 
+Three tabs: **Paycheck** (your stake, live), **Plan** (what it grows to) and **Learn** (staking in five minutes).
+
+
 - **One-tap staking.** Type an amount and see your weekly, monthly and yearly pay before you commit. A validator
   is picked for you (uptime, fee, and whether rewards compound), or choose your own from the ranked list.
 - **Your weekly paycheck, live.** A big "this is what your NIM pays you each week" number, plus an
@@ -24,6 +27,16 @@ shows what it pays you **every week** in NIM and your own currency, and makes th
 - **Changed your mind?** "Keep earning instead" cancels a withdrawal while it cools down.
 - **No double sends.** After you approve in Nimiq Pay, the screen stays in a confirming state and polls the chain
   until the change appears.
+- **Stake checkup.** Plain-language health checks on your position: are you being paid, is your validator reliable,
+  jailed or expensive, is NIM sitting idle, and is a clearly better validator available (with how much more it would pay
+  you a year). Every warning has a one-tap fix.
+- **Plan tab.** A 1, 3 or 5-year projector built on Nimiq's real emission curve (rewards decay over time), compound vs
+  paid-to-wallet, plus what not staking costs you: your share of all NIM shrinks as supply grows.
+- **Learn tab.** Six short lessons (what staking is, where the pay comes from, why idle NIM loses share, choosing a
+  validator, withdrawing, staying safe), each with live network numbers and a one-question check. Progress is saved.
+- **Network pulse.** Share of NIM staked, today's rate, new NIM per day and active validators.
+- **Your activity.** A log of everything you did in Payday.
+- **Light, dark or system theme**, with a one-tap toggle in the header.
 - **Switch validator** without unstaking (`sendUpdateStakerTransaction`, stake reactivates automatically).
 - **Share my payday.** A share card ("My NIM pays me 20 NIM every week, while I do nothing") with a deeplink
   that opens Payday inside Nimiq Pay.
