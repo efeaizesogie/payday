@@ -179,10 +179,12 @@ const resolvedDark = () => S.theme === 'dark' || (S.theme === 'system' && matchM
 async function start() {
   S.goalWeekly = store.get('goal', 0)
   S.theme = store.get<Theme>('theme', 'system'); applyTheme()
+  const forced = location.hash.match(/theme=(light|dark)/)
+  if (forced) { S.theme = forced[1] as Theme; applyTheme() }
   S.learned = store.get('learned', {})
   S.circles = store.get('circles', [])
   render()
-  if (location.hash.startsWith('#verify=')) return showVerify(location.hash.slice(8))
+  if (location.hash.startsWith('#verify=')) return showVerify(location.hash.slice(8).split('&')[0])
   try {
     S.wallet = await connectNimiqPay(() => refresh())
   }
@@ -190,7 +192,11 @@ async function start() {
     if (e instanceof WalletError && e.message === 'NOT_IN_NIMIQ_PAY') {
       // Demo deep links for judges and screenshots: #demo, #demo-staked, &tab=plan|learn, &lesson=<id>
       const h = new URLSearchParams(location.hash.slice(1).replace(/^demo(-staked)?/, m => `mode=${m}`))
-      if (location.hash === '#connect') { S.phase = 'connect'; S.demoConnect = true; render(); return }
+      if (location.hash.startsWith('#connect')) {
+        S.phase = 'connect'; S.demoConnect = true; render()
+        if (location.hash.includes('ask=share')) setTimeout(() => actions.connect(document.body), 300)
+        return
+      }
       if (h.get('mode')) return startDemoLink(h)
       S.phase = 'outside'; render(); return
     }
@@ -239,11 +245,18 @@ async function startDemoLink(h: URLSearchParams) {
   }
   const theme = h.get('theme')
   if (theme === 'dark' || theme === 'light') { S.theme = theme; applyTheme() }
+  const open = h.get('open')
+  const oc = open ? S.circles.find(x => x.id === open) : undefined
+  if (oc) { S.tab = 'circles'; S.circle = oc.id; loadCircle(oc) }
   const tab = h.get('tab')
-  if (tab === 'plan' || tab === 'learn') S.tab = tab
+  if (tab === 'plan' || tab === 'learn' || tab === 'circles') S.tab = tab
   const lesson = h.get('lesson')
   if (lesson && LESSONS.some(l => l.id === lesson)) { S.lesson = lesson; S.sheet = 'lesson' }
+  const sheet = h.get('sheet')
+  if (sheet === 'spend' || sheet === 'payslip' || sheet === 'validators') S.sheet = sheet
+  if (h.get('reveal')) { S.reveal = true; revealCounted = false }
   render()
+  if (h.get('ask') === 'stake') setTimeout(() => actions.stakeNew(document.body), 300)
 }
 
 async function enter() {

@@ -1,0 +1,13 @@
+[
+ {"id":"intro","shots":["s01-landing"],"cap":"Idle NIM is costing you","say":"Most people holding NIM never stake. And it's quietly costing them."},
+ {"id":"money","shots":["s04-money"],"cap":"See what idle NIM cost you","say":"Payday starts with a number no other app shows you: the money you've left on the table, rebuilt from your own history."},
+ {"id":"connect","shots":["s02-connect","s03-share"],"cap":"Connect in one tap","say":"Connecting takes one tap. Payday only sees your address, and Nimiq Pay asks before anything moves."},
+ {"id":"stake","shots":["s05-stake"],"cap":"Know your pay before you stake","say":"Choose an amount, see your weekly pay, and stake in one tap, with a validator picked for uptime, fees and compounding."},
+ {"id":"paycheck","shots":["s06-paycheck"],"pan":true,"cap":"Your NIM, on payroll","say":"Now your NIM works for you: a live paycheck, a stake checkup that catches a bad validator, and a goal to grow into."},
+ {"id":"reveal","shots":["s07-reveal"],"cap":"Every week is payday","say":"And every week, it's payday."},
+ {"id":"payslip","shots":["s08-payslip","s09-verify"],"cap":"A payslip anyone can verify","say":"Need proof? Your wallet signs a payslip that anyone can check against the live blockchain. Change one number, and it fails."},
+ {"id":"spend","shots":["s10-spend"],"cap":"Spend the interest. Keep the savings.","say":"Your pay is meant to be spent. Cash out only what you've earned, pay any Lightning invoice, or spend it in other Nimiq Pay apps, while your savings keep working."},
+ {"id":"circle","shots":["s11-circle"],"cap":"Circles: ajo with no middleman","say":"With Circles, family and friends stake together. It's ajo, but nobody holds the money."},
+ {"id":"learn","shots":["s12-plan","s13-lesson"],"cap":"Plan it. Learn it.","say":"Plan the years ahead on Nimiq's real reward curve, and learn staking in five minutes."},
+ {"id":"end","shots":[],"cap":"","say":"Payday. Turn your NIM into a weekly paycheck. Live now in Nimiq Pay."}
+]
